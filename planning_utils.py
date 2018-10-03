@@ -1,9 +1,12 @@
 from enum import Enum
 from queue import PriorityQueue
 import numpy as np
+from scipy.spatial import Voronoi, voronoi_plot_2d
+from bresenham import bresenham
+import numpy.linalg as LA
+import networkx as nx
 
-
-def create_grid(data, drone_altitude, safety_distance):
+def create_grid_graph(data, drone_altitude, safety_distance):
     """
     Returns a grid representation of a 2D configuration space
     based on given obstacle data, drone altitude and safety distance
@@ -26,6 +29,8 @@ def create_grid(data, drone_altitude, safety_distance):
     # Initialize an empty grid
     grid = np.zeros((north_size, east_size))
 
+    # Define a list to hold Voronoi points
+    points = []
     # Populate the grid with obstacles
     for i in range(data.shape[0]):
         north, east, alt, d_north, d_east, d_alt = data[i, :]
@@ -38,7 +43,32 @@ def create_grid(data, drone_altitude, safety_distance):
             ]
             grid[obstacle[0]:obstacle[1]+1, obstacle[2]:obstacle[3]+1] = 1
 
-    return grid, int(north_min), int(east_min)
+            # add center of obstacles to points list
+            points.append([north - north_min, east - east_min])
+
+    # create a voronoi graph based on the location of obstacle centres
+    graph = Voronoi(points)
+    
+    # check each edge from graph.ridge_vertices for collision
+    
+    edges = []
+    for i in graph.ridge_vertices:
+        p1 = graph.vertices[i[0]]
+        p2 = graph.vertices[i[1]]
+        cells = list(bresenham(int(p1[0]), int(p1[1]), int(p2[0]), int(p2[1])))
+        hit  = False
+        for c in cells:
+            if np.amin(c)<0 or c[0]>=grid.shape[0] or c[1]>=grid.shape[1]:
+                hit = True
+                break
+            elif grid[c[0], c[1]] == 1:
+                hit = True
+                break
+                
+        if hit == False:
+            edges.append((p1,p2))
+
+    return grid, edges, int(north_min), int(east_min)
 
 
 # Assume all actions cost the same.
@@ -87,8 +117,19 @@ def valid_actions(grid, current_node):
 
     return valid_actions
 
-
-def a_star(grid, h, start, goal):
+def G_weight(edges):
+    # create the graph with the weight of the edges
+    # set to the Euclidean distance between the points
+    G = nx.Graph()
+    for e in edges:
+        p1 = tuple(e[0])
+        p2 = tuple(e[1])
+        dist = LA.norm(np.array(p2) - np.array(p1))
+        G.add_edge(p1, p2, weight=dist)
+    
+    return G
+    
+def a_star(graph, h, start, goal):
 
     path = []
     path_cost = 0
@@ -112,16 +153,14 @@ def a_star(grid, h, start, goal):
             found = True
             break
         else:
-            for action in valid_actions(grid, current_node):
-                # get the tuple representation
-                da = action.delta
-                next_node = (current_node[0] + da[0], current_node[1] + da[1])
-                branch_cost = current_cost + action.cost
+            for next_node in graph[current_node]:
+                cost = graph.edges[current_node, next_node]['weight']
+                branch_cost = current_cost + cost
                 queue_cost = branch_cost + h(next_node, goal)
                 
                 if next_node not in visited:                
                     visited.add(next_node)               
-                    branch[next_node] = (branch_cost, current_node, action)
+                    branch[next_node] = (branch_cost, current_node)
                     queue.put((queue_cost, next_node))
              
     if found:
@@ -139,8 +178,64 @@ def a_star(grid, h, start, goal):
         print('**********************') 
     return path[::-1], path_cost
 
-
-
 def heuristic(position, goal_position):
-    return np.linalg.norm(np.array(position) - np.array(goal_position))
+    return LA.norm(np.array(position) - np.array(goal_position))
 
+def collinearity_check(p1, p2, p3, epsilon=1e-6):   
+    m = np.concatenate((p1, p2, p3), 0)
+    det = np.linalg.det(m)
+    return abs(det) < epsilon
+
+def point(p):
+    return np.array([p[0], p[1], 1.]).reshape(1, -1)
+
+def prune_path(path):
+    pruned_path = [p for p in path]
+    
+    i = 0
+    while i < len(pruned_path) - 2:
+        p1 = point(pruned_path[i])
+        p2 = point(pruned_path[i+1])
+        p3 = point(pruned_path[i+2])
+        
+        # If the 3 points are in a line remove
+        # the 2nd point.
+        # The 3rd point now becomes and 2nd point
+        # and the check is redone with a new third point
+        # on the next iteration.
+        if collinearity_check(p1, p2, p3):
+            # Something subtle here but we can mutate
+            # `pruned_path` freely because the length
+            # of the list is check on every iteration.
+            pruned_path.remove(pruned_path[i+1])
+        else:
+            i += 1
+    return pruned_path
+
+def closest_point(graph, current_point):
+    """
+    Compute the closest point in the `graph`
+    to the `current_point`.
+    """
+    closest_point = None
+    dist = 100000
+    for p in graph.nodes:
+        d = LA.norm(np.array(p) - np.array(current_point))
+        if d < dist:
+            closest_point = p
+            dist = d
+    return closest_point
+
+def global_to_local(self, global_position, global_home):
+    
+    # Get easting and northing of global_home
+    (easting_home, northing_home, _, _ ) = utm.from_latlon(global_home[1], global_home[0])
+    # Get easting and northing of global_position
+    (easting_position, northing_position, _, _ ) = utm.from_latlon(global_position[1], global_position[0])
+    # Create local_position from global and home positions                                     
+    local_position = numpy.array([0, 0, 0])
+    local_position[0] = northing_position - northing_home
+    local_position[1] = easting_position - easting_home
+    local_position[2] = global_position[2] - global_home[2]
+    
+    return local_position
