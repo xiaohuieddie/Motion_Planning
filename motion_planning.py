@@ -158,7 +158,7 @@ class MotionPlanning(Drone):
         # TODO: adapt to set goal as latitude / longitude position and convert
         goal_global_position = (-122.39827005, 37.79639587, 0)
         goal_local_position = global_to_local(goal_global_position, global_home)
-        grid_goal = (int(goal_local_position - north_offset),int(goal_local_position[1] - east_offset))
+        grid_goal = (int(goal_local_position[0] - north_offset),int(goal_local_position[1] - east_offset))
         print('Local Start and Goal: ', grid_start, grid_goal)
         
         # Add weight to graph
