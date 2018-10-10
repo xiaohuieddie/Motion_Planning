@@ -146,10 +146,6 @@ class MotionPlanning(Drone):
         grid, edges, north_offset, east_offset = create_grid_graph(data, TARGET_ALTITUDE, SAFETY_DISTANCE)
         print("North offset = {0}, east offset = {1}".format(north_offset, east_offset))
         
-        with open("Edges.txt", "w") as f:
-            for s in edges:
-                f.write(str(s) +"\n")
-    
         # Define starting point on the grid (this is just grid center)
         # grid_start = (-north_offset, -east_offset)
 
@@ -160,7 +156,9 @@ class MotionPlanning(Drone):
         # grid_goal = (-north_offset + 10, -east_offset + 10)
         
         # TODO: adapt to set goal as latitude / longitude position and convert
-        grid_goal = (750., 370.)
+        goal_global_position = (-122.39827005, 37.79639587, 0)
+        goal_local_position = global_to_local(goal_global_position, global_home)
+        grid_goal = (int(goal_local_position - north_offset),int(goal_local_position[1] - east_offset))
         print('Local Start and Goal: ', grid_start, grid_goal)
         
         # Add weight to graph
@@ -212,12 +210,12 @@ class MotionPlanning(Drone):
 
         self.stop_log()
         
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--port', type=int, default=5760, help='Port number')
     parser.add_argument('--host', type=str, default='127.0.0.1', help="host address, i.e. '127.0.0.1'")
+    parser.add_argument('--lat', type=float, default=1000, help="latitude")
+    parser.add_argument('--lon', type=float, default=1000, help="latitude")
     args = parser.parse_args()
 
     conn = MavlinkConnection('tcp:{0}:{1}'.format(args.host, args.port), timeout=60)
